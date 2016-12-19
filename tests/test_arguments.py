@@ -106,6 +106,17 @@ def test_file_args(runner):
         assert result.exit_code == 0
 
 
+def test_path_args(runner):
+    @click.command()
+    @click.argument('input', type=click.Path(dir_okay=False, allow_dash=True))
+    def foo(input):
+        click.echo(input)
+
+    result = runner.invoke(foo, ['-'])
+    assert result.output == '-\n'
+    assert result.exit_code == 0
+
+
 def test_file_atomics(runner):
     @click.command()
     @click.argument('output', type=click.File('wb', atomic=True))
@@ -258,3 +269,21 @@ def test_nargs_specified_plus_star_ordering(runner):
         'd',
         PY2 and "(u'e', u'f')" or "('e', 'f')",
     ]
+
+
+def test_defaults_for_nargs(runner):
+    @click.command()
+    @click.argument('a', nargs=2, type=int, default=(1, 2))
+    def cmd(a):
+        x, y = a
+        click.echo(x + y)
+
+    result = runner.invoke(cmd, [])
+    assert result.output.strip() == '3'
+
+    result = runner.invoke(cmd, ['3', '4'])
+    assert result.output.strip() == '7'
+
+    result = runner.invoke(cmd, ['3'])
+    assert result.exception is not None
+    assert 'argument a takes 2 values' in result.output

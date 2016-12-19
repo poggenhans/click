@@ -1,3 +1,4 @@
+import errno
 import os
 import sys
 from contextlib import contextmanager
@@ -49,7 +50,9 @@ def _check_multicommand(base_command, cmd_name, cmd, register=False):
     raise RuntimeError('%s.  Command "%s" is set to chain and "%s" was '
                        'added as subcommand but it in itself is a '
                        'multi command.  ("%s" is a %s within a chained '
-                       '%s named "%s")' % (
+                       '%s named "%s").  This restriction was supposed to '
+                       'be lifted in 6.0 but the fix was flawed.  This '
+                       'will be fixed in Click 7.0' % (
                            hint, base_command.name, cmd_name,
                            cmd_name, cmd.__class__.__name__,
                            base_command.__class__.__name__,
@@ -206,6 +209,11 @@ class Context(object):
         self.params = {}
         #: the leftover arguments.
         self.args = []
+        #: protected arguments.  These are arguments that are prepended
+        #: to `args` when certain parsing scenarios are encountered but
+        #: must be never propagated to another arguments.  This is used
+        #: to implement nested parsing.
+        self.protected_args = []
         if obj is None and parent is not None:
             obj = parent.obj
         #: the user object stored.
@@ -647,7 +655,7 @@ class BaseCommand(object):
                           name from ``sys.argv[0]``.
         :param complete_var: the environment variable that controls the
                              bash completion support.  The default is
-                             ``"_<prog_name>_COMPLETE"`` with prog name in
+                             ``"_<prog_name>_COMPLETE"`` with prog_name in
                              uppercase.
         :param standalone_mode: the default behavior is to invoke the script
                                 in standalone mode.  Click will then
@@ -662,7 +670,7 @@ class BaseCommand(object):
                       constructor.  See :class:`Context` for more information.
         """
         # If we are in Python 3, we will verify that the environment is
-        # sane at this point of reject further execution to avoid a
+        # sane at this point or reject further execution to avoid a
         # broken script.
         if not PY2:
             _verify_python3_env()
@@ -698,6 +706,11 @@ class BaseCommand(object):
                     raise
                 e.show()
                 sys.exit(e.exit_code)
+            except IOError as e:
+                if e.errno == errno.EPIPE:
+                    sys.exit(1)
+                else:
+                    raise
         except Abort:
             if not standalone_mode:
                 raise
@@ -730,11 +743,13 @@ class Command(BaseCommand):
                        shown on the command listing of the parent command.
     :param add_help_option: by default each command registers a ``--help``
                             option.  This can be disabled by this parameter.
+    :param hidden: hide this command from help outputs.
     """
 
     def __init__(self, name, context_settings=None, callback=None,
                  params=None, help=None, epilog=None, short_help=None,
-                 options_metavar='[OPTIONS]', add_help_option=True):
+                 options_metavar='[OPTIONS]', add_help_option=True,
+                 hidden=False):
         BaseCommand.__init__(self, name, context_settings)
         #: the callback to execute when the command fires.  This might be
         #: `None` in which case nothing happens.
@@ -750,6 +765,7 @@ class Command(BaseCommand):
             short_help = make_default_short_help(help)
         self.short_help = short_help
         self.add_help_option = add_help_option
+        self.hidden = hidden
 
     def get_usage(self, ctx):
         formatter = ctx.make_formatter()
@@ -927,6 +943,12 @@ class MultiCommand(Command):
         #: overridden with the :func:`resultcallback` decorator.
         self.result_callback = result_callback
 
+        if self.chain:
+            for param in self.params:
+                if isinstance(param, Argument) and not param.required:
+                    raise RuntimeError('Multi commands in chain mode cannot '
+                                       'have optional arguments.')
+
     def collect_usage_pieces(self, ctx):
         rv = Command.collect_usage_pieces(self, ctx)
         rv.append(self.subcommand_metavar)
@@ -983,6 +1005,8 @@ class MultiCommand(Command):
             # What is this, the tool lied about a command.  Ignore it
             if cmd is None:
                 continue
+            if cmd.hidden:
+                continue
 
             help = cmd.short_help or ''
             rows.append((subcommand, help))
@@ -995,7 +1019,15 @@ class MultiCommand(Command):
         if not args and self.no_args_is_help and not ctx.resilient_parsing:
             echo(ctx.get_help(), color=ctx.color)
             ctx.exit()
-        return Command.parse_args(self, ctx, args)
+
+        rest = Command.parse_args(self, ctx, args)
+        if self.chain:
+            ctx.protected_args = rest
+            ctx.args = []
+        elif rest:
+            ctx.protected_args, ctx.args = rest[:1], rest[1:]
+
+        return ctx.args
 
     def invoke(self, ctx):
         def _process_result(value):
@@ -1004,7 +1036,7 @@ class MultiCommand(Command):
                                    **ctx.params)
             return value
 
-        if not ctx.args:
+        if not ctx.protected_args:
             # If we are invoked without command the chain flag controls
             # how this happens.  If we are not in chain mode, the return
             # value here is the return value of the command.
@@ -1019,7 +1051,10 @@ class MultiCommand(Command):
                     return _process_result([])
             ctx.fail('Missing command.')
 
-        args = ctx.args
+        # Fetch args back out
+        args = ctx.protected_args + ctx.args
+        ctx.args = []
+        ctx.protected_args = []
 
         # If we're not in chain mode, we only allow the invocation of a
         # single command but we also inform the current context about the
@@ -1054,7 +1089,7 @@ class MultiCommand(Command):
                                            allow_extra_args=True,
                                            allow_interspersed_args=False)
                 contexts.append(sub_ctx)
-                args = sub_ctx.args
+                args, sub_ctx.args = sub_ctx.args, []
 
             rv = []
             for sub_ctx in contexts:
@@ -1173,9 +1208,9 @@ class CommandCollection(MultiCommand):
     def get_command(self, ctx, cmd_name):
         for source in self.sources:
             rv = source.get_command(ctx, cmd_name)
-            if self.chain:
-                _check_multicommand(self, cmd_name, rv)
             if rv is not None:
+                if self.chain:
+                    _check_multicommand(self, cmd_name, rv)
                 return rv
 
     def list_commands(self, ctx):
@@ -1395,9 +1430,9 @@ class Option(Parameter):
 
     :param show_default: controls if the default value should be shown on the
                          help page.  Normally, defaults are not shown.
-    :param prompt: if set to `True` or a non empty string then the user will
-                   be prompted for input if not set.  If set to `True` the
-                   prompt will be the option name capitalized.
+    :param prompt: if set to `True` or a non empty string then the user will be
+                   prompted for input.  If set to `True` the prompt will be the
+                   option name capitalized.
     :param confirmation_prompt: if set then the value will need to be confirmed
                                 if it was prompted for.
     :param hide_input: if this is `True` then the input on the prompt will be
@@ -1418,6 +1453,7 @@ class Option(Parameter):
                                variable in case a prefix is defined on the
                                context.
     :param help: the help string.
+    :param hidden: hide this option from help outputs.
     """
     param_type_name = 'option'
 
@@ -1425,7 +1461,7 @@ class Option(Parameter):
                  prompt=False, confirmation_prompt=False,
                  hide_input=False, is_flag=None, flag_value=None,
                  multiple=False, count=False, allow_from_autoenv=True,
-                 type=None, help=None, **attrs):
+                 type=None, help=None, hidden=False, show_choices=True, **attrs):
         default_is_missing = attrs.get('default', _missing) is _missing
         Parameter.__init__(self, param_decls, type=type, **attrs)
 
@@ -1438,6 +1474,7 @@ class Option(Parameter):
         self.prompt = prompt_text
         self.confirmation_prompt = confirmation_prompt
         self.hide_input = hide_input
+        self.hidden = hidden
 
         # Flags
         if is_flag is None:
@@ -1470,6 +1507,7 @@ class Option(Parameter):
         self.allow_from_autoenv = allow_from_autoenv
         self.help = help
         self.show_default = show_default
+        self.show_choices = show_choices
 
         # Sanity check for stuff we don't support
         if __debug__:
@@ -1565,6 +1603,8 @@ class Option(Parameter):
             parser.add_option(self.opts, **kwargs)
 
     def get_help_record(self, ctx):
+        if self.hidden:
+            return
         any_prefix_is_slash = []
 
         def _write_opts(opts):
@@ -1619,8 +1659,8 @@ class Option(Parameter):
         if self.is_bool_flag:
             return confirm(self.prompt, default)
 
-        return prompt(self.prompt, default=default,
-                      hide_input=self.hide_input,
+        return prompt(self.prompt, default=default, type=self.type,
+                      hide_input=self.hide_input, show_choices=self.show_choices,
                       confirmation_prompt=self.confirmation_prompt,
                       value_proc=lambda x: self.process_value(ctx, x))
 

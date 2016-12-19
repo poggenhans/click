@@ -64,6 +64,11 @@ def _verify_python3_env():
                               stderr=subprocess.PIPE).communicate()[0]
         good_locales = set()
         has_c_utf8 = False
+
+        # Make sure we're operating on text here.
+        if isinstance(rv, bytes):
+            rv = rv.decode('ascii', 'replace')
+
         for line in rv.splitlines():
             locale = line.strip()
             if locale.lower().endswith(('.utf-8', '.utf8')):
@@ -89,7 +94,7 @@ def _verify_python3_env():
         else:
             extra += (
                 'This system lists a couple of UTF-8 supporting locales that\n'
-                'you can pick from.  The following suitable locales where\n'
+                'you can pick from.  The following suitable locales were\n'
                 'discovered: %s'
             ) % ', '.join(sorted(good_locales))
 

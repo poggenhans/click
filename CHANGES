@@ -3,16 +3,80 @@ Click Changelog
 
 This contains all major version changes between Click releases.
 
+Version 7.0
+-----------
+
+(upcoming release with new features, release date to be decided)
+
+- The user is now presented with the available choices if prompt=True and
+  type=click.Choice in a click.option. The choices are listed within
+  parentthesis like 'Choose fruit (apple, orange): '.
+- The exception objects now store unicode properly.
+- Added the ability to hide commands and options from help.
+- Added Float Range in Types.
+- `secho`'s first argument can now be `None`, like in `echo`.
+- Usage errors now hint at the `--help` option.
+- ``launch`` now works properly under Cygwin. See #650.
+- `CliRunner.invoke` now may receive `args` as a string representing
+  a Unix shell command. See #664.
+
+Version 6.7
+-----------
+
+(bugfix release; yet to be released)
+
+- Make `click.progressbar` work with `codecs.open` files. See #637.
+- Fix bug in bash completion with nested subcommands. See #639.
+- Fix test runner not saving caller env correctly. See #644.
+- Fix handling of SIGPIPE. See #626
+
+Version 6.6
+-----------
+
+(bugfix release; released on April 4th 2016)
+
+- Fix bug in `click.Path` where it would crash when passed a `-`. See #551.
+
+Version 6.4
+-----------
+
+(bugfix release; released on March 24th 2016)
+
+- Fix bug in bash completion where click would discard one or more trailing
+  arguments. See #471.
+
+Version 6.3
+-----------
+
+(bugfix release; released on February 22 2016)
+
+- Fix argument checks for interpreter invoke with `-m` and `-c`
+  on Windows.
+- Fixed a bug that cased locale detection to error out on Python 3.
+
+Version 6.2
+-----------
+
+(bugfix release, released on November 27th 2015)
+
+- Correct fix for hidden progress bars.
+
+Version 6.1
+-----------
+
+(bugfix release, released on November 27th 2015)
+
+- Resolved an issue with invisible progress bars no longer rendering.
+- Disable chain commands with subcommands as they were inherently broken.
+- Fix `MissingParameter` not working without parameters passed.
+
 Version 6.0
 -----------
 
-(codename and release date to be decided)
+(codename "pow pow", released on November 24th 2015)
 
 - Optimized the progressbar rendering to not render when it did not
   actually change.
-- Actively reject multi commands within chained multi commands.  This
-  cannot be supported with the current setup of how the invocation for
-  subcommands works.
 - Explicitly disallow nargs=-1 with a set default.
 - The context is now closed before it's popped from the stack.
 - Added support for short aliases for the false flag on toggles.
@@ -36,6 +100,15 @@ Version 6.0
 - Unittests now always force a certain virtual terminal width.
 - Added support for allowing dashes to indicate standard streams to the
   `Path` type.
+- Multi commands in chain mode no longer propagate arguments left over
+  from parsing to the callbacks.  It's also now disallowed through an
+  exception when optional arguments are attached to multi commands if chain
+  mode is enabled.
+- Relaxed restriction that disallowed chained commands to have other
+  chained commands as child commands.
+- Arguments with positive nargs can now have defaults implemented.
+  Previously this configuration would often result in slightly unexpected
+  values be returned.
 
 Version 5.1
 -----------
