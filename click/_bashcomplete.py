@@ -60,9 +60,7 @@ def get_choices(cli, prog_name, args, incomplete):
                     try:
                         if callable(param.autocompletion):
                             choices.extend(param.autocompletion(ctx=ctx,
-                                                                incomplete=incomplete,
-                                                                cwords=cwords,
-                                                                cword=cword))
+                                                                incomplete=incomplete))
                         else:
                             choices.extend(param.autocompletion)
                     except AttributeError:
